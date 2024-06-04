@@ -6,18 +6,27 @@ use esp_idf_svc::{
     http::server::EspHttpServer,
 };
 use embedded_svc::{http::Method, io::Write};
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_svc::wifi::{
-    self, 
-    EspWifi, 
-    AccessPointConfiguration
+    self,
+    EspWifi,
+    AccessPointConfiguration,
 };
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use anyhow::anyhow;
+use std::str;
+
+struct State {
+    on_time_in_ms: u32,
+    off_time_in_ms: u32,
+}
+
+impl State {
+    fn new(on_time_in_ms: u32, off_time_in_ms: u32) -> Self {
+        State { on_time_in_ms, off_time_in_ms }
+    }
+}
 
 fn main() -> anyhow::Result<()> {
     // Link some ESP-IDF patches to the executable to make the rust code work.
@@ -26,13 +35,13 @@ fn main() -> anyhow::Result<()> {
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
 
-
-    log::info!("Setup Pheripherals...");
+    log::info!("Setup Peripherals...");
     let peripherals = Peripherals::take().unwrap();
 
-    log::info!("Setup gpiois...");
-    let mut io_on = PinDriver::output(peripherals.pins.gpio2)?;
-    let mut io_off = PinDriver::output(peripherals.pins.gpio3)?;
+    log::info!("Setup GPIOs...");
+    let mut io_on = PinDriver::output(peripherals.pins.gpio1)?;
+    let mut io_off = PinDriver::output(peripherals.pins.gpio2)?;
+    let mut io_power = PinDriver::output(peripherals.pins.gpio42)?;
 
     let sys_loop = EspSystemEventLoop::take()?;
 
@@ -65,9 +74,8 @@ fn main() -> anyhow::Result<()> {
     log::info!("Setup webserver...");
     let mut server = EspHttpServer::new(&Default::default())?;
 
-    let timer_values = Arc::new(Mutex::new((Duration::from_secs(240), Duration::from_secs(480)))); 
-    // Default: 4 minutes on, 8 minutes off
-    let timer_values_clone = Arc::clone(&timer_values);
+    let state = Arc::new(Mutex::new(State::new(10 * 1000, 10 * 1000)));
+    let state_clone = Arc::clone(&state);
 
     // Add default route
     log::info!("Setup routes...");
@@ -76,62 +84,68 @@ fn main() -> anyhow::Result<()> {
         let mut response = request.into_ok_response()?;
         response.write_all(html.as_bytes())
     })?;
-    server.fn_handler("/update", Method::Post, move |request| {
-        log::info!("TODO: Read values from POST request");
-        // let body = request.into_body();
-        // let html = "index_html()";
-        let html = index_html();
+    server.fn_handler("/update", Method::Post, move |mut request| {
+        let mut state = state_clone.lock().unwrap();
+
+        let mut buffer: [u8; 16] = [0; 16];
+        request.read(&mut buffer)?;
+
+        // convert buffer to string
+        let input = str::from_utf8(&buffer).unwrap();
+
+        // trim \0 values and split post values
+        let times: Vec<&str> = input.trim_matches(char::from(0)).split('&').collect();
+
+        let on_str = times[0].replace("on=", "");
+        let off_str = times[1].replace("off=", "");
+        log::info!("on: {on_str}, off: {off_str}");
+
+        // parse values to INT
+        let result: &str = if let (Ok(on_time_in_seconds), Ok(off_time_in_seconds)) = (on_str.parse::<u32>(), off_str.parse::<u32>()) {
+            *state = State::new(on_time_in_seconds * 1000, off_time_in_seconds * 1000);
+
+            "timer values updated.."
+        } else {
+            log::error!("Invalid timer values!");
+            "Invalid timer values!"
+        };
+
+        let html = post_html(result);
         let mut response = request.into_ok_response()?;
         response.write_all(html.as_bytes())
-        // request.into_ok_response()?.write_all(html.as_bytes())
     })?;
-
-    // Define the web server routes
-    // server.fn_handler("/set_times", Method::Post, move |request| {
-        // let body = request.into_body();
-        // let times: Vec<&str> = body.split(',').collect();
-        // if times.len() == 2 {
-        //     if let (Ok(on_time), Ok(off_time)) = (times[0].parse::<u64>(), times[1].parse::<u64>()) {
-        //         let mut timer_values = timer_values_clone.lock().unwrap();
-        //         *timer_values = (Duration::from_secs(on_time), Duration::from_secs(off_time));
-        //         request.into_ok_response()?
-        //             .write_all("Timer values updated".into())?;
-        //     } else {
-        //         response.bad_request("Invalid timer values".into())?;
-        //     }
-        // } else {
-        //     response.bad_request("Invalid input format. Use 'on_time,off_time'".into())?;
-        // }
-        // Ok(())
-    // })?;
 
     log::info!("Application started");
     loop {
-        log::info!("Turn on");
+        let on_time = state.lock().unwrap().on_time_in_ms;
+        let off_time = state.lock().unwrap().off_time_in_ms;
+        log::info!("Turn on {}", on_time);
+        io_power.set_high()?;
         io_on.set_high()?;
         FreeRtos::delay_ms(500);
         io_on.set_low()?;
 
         // turn off after 4 minutes
-        FreeRtos::delay_ms(60000);
+        FreeRtos::delay_ms(on_time);
 
-        log::info!("Turn off");
+        log::info!("Turn off {}", off_time);
+        io_power.set_low()?;
         io_off.set_high()?;
         FreeRtos::delay_ms(500);
         io_off.set_low()?;
 
         // turn on after 8 minutes
-        FreeRtos::delay_ms(60000);
+        FreeRtos::delay_ms(off_time);
     }
 }
 
 fn index_html() -> String {
-        format!(
-        r#"
+    r#"
 <!DOCTYPE html>
 <html>
     <head>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>automatic timer</title>
     </head>
 
@@ -139,15 +153,37 @@ fn index_html() -> String {
 
 	<p>Set the timeouts for the ON and OFF State:</p>
 	<form action="/update" method="post">
-	  <label for="on">ON (minutes)</label>
-	  <input type="number" id="on" name="on" min="1" max="59" value="4">
+	  <label for="on">ON (seconds)</label>
+	  <input type="number" id="on" name="on" min="1" max="59">
 	  <br / >
-	  <label for="off">OFF (minutes)</label>
-	  <input type="number" id="off" name="off" min="1" max="59" value="8">
+	  <label for="off">OFF (seconds)</label>
+	  <input type="number" id="off" name="off" min="1" max="59">
+	  <br / >
 	  <input type="submit">
 	</form>
 	</body>
 </html>
+"#.to_string()
+}
+
+fn post_html(result: &str) -> String {
+    format!(
+        r#"
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>automatic timer</title>
+        <meta http-equiv="refresh" content="5; url=/" />
+    </head>
+
+	<body>
+
+	<p>{}</p>
+	</body>
+</html>
 "#,
+        result
     )
 }

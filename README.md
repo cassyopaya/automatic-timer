@@ -1,9 +1,14 @@
 # Automatic timer
-Simple embedded application to controll 2 GPIO based on an internal timer. 
+Simple embedded application to control GPIO based on an internal timer. 
 
-Timeouts can be changed via web. [Defaults: 4min on, 8min off]
+> [Defaults: 10 seconds on, 10 seconds off]
 
+Timeouts can be changed via web.  
 The device provides an Access point for easy usage.
+
+- GPIO2: Turn on for 500ms, wait for 20seconds
+- GPIO3  Wait for 10seconds, turn on for 500ms, wait again for 10seconds
+- GPIO42: Turn on for 10seconds, wait for 10seconds
 
 ## ☘️ Usage
 
@@ -11,7 +16,7 @@ The device provides an Access point for easy usage.
 2. Connect to the Access Point named *ESP32*
 3. Enter the access point password: *12345678*
 4. Open the website: http://192.168.71.1 in a browser
-5. Enter the timeouts you prefere and press save
+5. Enter the timeouts you prefer and press save
 
 
 ## ⚙️ Development

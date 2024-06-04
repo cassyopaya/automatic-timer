@@ -1,6 +1,6 @@
 [package]
 name = "automatic-timer"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Benjamin Stürmer <webmaster@stuermer-benjamin.de>"]
 edition = "2021"
 resolver = "2"
@@ -9,16 +9,14 @@ description = "Simple embedded application to switch an GPIO on/off based on an 
 
 [[bin]]
 name = "automatic-timer"
-harness = false # do not use the built in cargo test harness -> resolve rust-analyzer errors
+harness = false # do not use the built-in cargo test harness -> resolve rust-analyzer errors
 
 [profile.release]
 opt-level = "s"
-default-features = false # disable proc-macros
 
 [profile.dev]
-debug = true    # Symbols are nice and they don't increase the size on Flash
+debug = true # Symbols are nice, and they don't increase the size on Flash
 opt-level = "z"
-default-features = false # disable proc-macros
 
 [features]
 default = ["std", "embassy", "esp-idf-svc/native"]
@@ -42,8 +40,6 @@ heapless ="0.8.0"
 
 [build-dependencies]
 embuild = "0.31.3"
-
-
 
 [package.metadata.espflash]
 partition_table = "./partitions.csv"
